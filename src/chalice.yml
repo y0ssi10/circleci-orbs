@@ -1,0 +1,76 @@
+version: 2.1
+
+orbs:
+  aws-cli: circleci/aws-cli@0.1.4
+
+executors:
+  default:
+    working_directory: ~/repo
+    parameters:
+      python_version:
+        type: string
+        default: 3.7
+    docker:
+      - image: circleci/python:<< parameters.python_version >>
+
+commands:
+  setup:
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - python-deps-v1-{{ checksum "Pipfile.lock" }}
+            - python-deps-v1-
+      - run:
+          name: Install dependencies
+          command: |
+            sudo pip install pipenv
+            pipenv install --dev
+      - save_cache:
+          key: - python-deps-v1-{{ checksum "Pipfile.lock" }}
+          paths:
+            - ~/.venv
+
+jobs:
+  lint:
+    executor: default
+    steps:
+      - setup
+      - run:
+          name: Run Lint
+          command: pipenv run lint
+
+  test:
+    executor: default
+    steps:
+      - setup
+      - run:
+          name: Run Tests
+          command: pipenv run test
+      - store_artifacts:
+          path: coverage
+          destination: coverage
+      - store_test_results:
+          path: test-results
+
+  deploy:
+    executor: default
+    parameters:
+      stage:
+        type: string
+    steps:
+      - aws-cli/install
+      - aws-cli/configure
+          aws-access-key-id: $AWS_ACCESS_KEY_ID
+          aws-secret-access-key: $AWS_SECRET_ACCESS_KEY
+          aws-region: $AWS_REGION
+      - setup
+      - run:
+          name: Generate requirements.txt
+          command: chalice lock --requirements
+      - run:
+          name: Deploy
+          command:  chalice deploy --stage << parameters.stage >>
+      - store_artifacts:
+          path: .chalice
+          destination: artifacts
